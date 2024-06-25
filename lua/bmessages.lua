@@ -34,10 +34,14 @@ local function is_bmessages_buffer_open(options)
 	return vim.api.nvim_buf_is_valid(bufnr) and vim.api.nvim_buf_is_loaded(bufnr)
 end
 
+local prev_num_messages = 0
+local prev_linenr = 1
+
 local function update_messages_buffer(options)
 	return function()
-		local new_messages = vim.api.nvim_cmd({ cmd = "messages" }, { output = true })
-		if new_messages == "" then
+		-- local new_messages = vim.api.nvim_cmd({ cmd = "messages" }, { output = true })
+    local messages = require("noice.message.manager").get(require"noice.config".options.commands.history.filter, vim.tbl_deep_extend("force", { history = true, sort = true, }, require"noice.config".options.commands.history.filter_opts or {}))
+		if #messages == prev_num_messages then
 			return
 		end
 
@@ -46,18 +50,24 @@ local function update_messages_buffer(options)
 			return
 		end
 
-		local lines = vim.split(new_messages, "\n")
-		local current_lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
-
-		if #current_lines == #lines and vim.deep_equal(current_lines, lines) then
-			return
-		end
-
 		vim.api.nvim_set_option_value("modifiable", true, { buf = bufnr })
-		vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, lines)
+    local linenr = prev_linenr
+    for _, message in ipairs({unpack(messages, prev_num_messages + 1)}) do
+      local m = require"noice.text.format".format(message)
+      m:render(bufnr, require("noice.config").ns, linenr)
+
+      linenr = linenr + m:height()
+      require"vim.lsp.log".warn(linenr)
+    end
+
+    prev_num_messages = #messages
+    prev_linenr = linenr
+
 		if options.use_timer then
 			vim.api.nvim_set_option_value("modifiable", false, { buf = bufnr })
 		end
+
+		local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
 
 		if options.autoscroll and vim.api.nvim_buf_get_name(vim.api.nvim_get_current_buf()) ~= options.buffer_name then
 			local winnr = vim.fn.bufwinnr(bufnr)
@@ -105,6 +115,8 @@ local function create_messages_buffer(new_options)
 	local options = merge_options(M.options, new_options)
 
 	if is_bmessages_buffer_open(options) then
+    prev_num_messages = 0
+    prev_linenr = 1
 		if M.current_split_type == options.split_type then
 			vim.api.nvim_buf_delete(vim.fn.bufnr(options.buffer_name), { force = true })
 			return nil
